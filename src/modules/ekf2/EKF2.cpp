@@ -2181,6 +2181,10 @@ void EKF2::UpdateBaroSample(ekf2_timestamps_s &ekf2_timestamps)
 
 		_ekf.setBaroData(baroSample{airdata.timestamp_sample, airdata.baro_alt_meter, reset});
 
+#if defined(CONFIG_EKF2_GNSS)
+		_gps_alt_drift.updateBaroLpf(airdata.baro_alt_meter, airdata.timestamp_sample);
+#endif // CONFIG_EKF2_GNSS
+
 		ekf2_timestamps.vehicle_air_data_timestamp_rel = (int16_t)((int64_t)airdata.timestamp / 100 -
 				(int64_t)ekf2_timestamps.timestamp / 100);
 	}
@@ -2408,6 +2412,86 @@ bool EKF2::UpdateFlowSample(ekf2_timestamps_s &ekf2_timestamps)
 #endif // CONFIG_EKF2_OPTICAL_FLOW
 
 #if defined(CONFIG_EKF2_GNSS)
+void EKF2::GpsAltDriftDetector::updateBaroLpf(float baro_alt, uint64_t timestamp)
+{
+	if (last_baro_ts != 0) {
+		const float dt = 1e-6f * (timestamp - last_baro_ts);
+		baro_lpf.update(baro_alt, dt);
+
+	} else {
+		baro_lpf.reset(baro_alt);
+	}
+
+	last_baro_ts = timestamp;
+}
+
+void EKF2::GpsAltDriftDetector::update(const sensor_gps_s &gps, uORB::PublicationMulti<gps_altitude_drift_correction_s> &pub)
+{
+	const float gps_alt = static_cast<float>(gps.altitude_msl_m);
+	const bool gps_valid = (gps.fix_type >= 2)
+			       && (gps.eph < 5.f)
+			       && (gps.epv < 10.f)
+			       && (gps.s_variance_m_s < 1.f);
+	const bool gps_timeout = (last_gps_ts != 0) && (gps.timestamp - last_gps_ts > 500000);
+
+	if (gps_valid && (last_gps_ts != 0) && (last_baro_ts != 0) && !gps_timeout) {
+
+		vel_integral += 1e-6f * (gps.timestamp - last_gps_ts) * (-gps.vel_d_m_s);
+
+		// sample at 1Hz normally, or immediately on pending hit
+		const bool sample_due = (last_sample_ts == 0)
+					|| hit_pending
+					|| (gps.timestamp >= last_sample_ts + 1000000);
+
+		if (sample_due) {
+			d1[widx] = gps_alt - baro_lpf.getState();
+			d2[widx] = gps_alt - vel_integral;
+
+			widx = (widx + 1) % kWindowSize;
+
+			if (wcount < kWindowSize) {
+				wcount++;
+			}
+
+			last_sample_ts = gps.timestamp;
+
+			if (wcount > 1) {
+				const int newest = (widx - 1 + kWindowSize) % kWindowSize;
+				const int oldest = (widx - wcount + kWindowSize) % kWindowSize;
+
+				const float a = fabsf(d1[newest] - d1[oldest]); // change in (gps_alt - baro_alt) over window
+				const float b = fabsf(d2[newest] - d2[oldest]); // change in (gps_alt - vel_integral) over window
+				const float c = fabsf((d1[newest] - d2[newest]) - (d1[oldest] - d2[oldest])); // change in (vel_integral - baro_alt) over window
+
+				// gps_alt drift has to have relevant magnitude and larger than vel-baro drift
+				const bool hit = (a > kDriftThreshold) && (b > kDriftThreshold)
+						 && (a > c) && (b > c);
+
+				// hit pending to filter out single outliers
+				if (hit && hit_pending) {
+					gps_altitude_drift_correction_s correction{};
+					correction.timestamp = hrt_absolute_time();
+					correction.altitude_offset = d1[newest] - d1[oldest];
+					pub.publish(correction);
+					hit_pending = false;
+
+				} else {
+					hit_pending = hit;
+				}
+			}
+		}
+
+	} else {
+		vel_integral = 0.f;
+		wcount = 0;
+		widx = 0;
+		last_sample_ts = 0;
+		hit_pending = false;
+	}
+
+	last_gps_ts = gps.timestamp;
+}
+
 void EKF2::UpdateGpsSample(ekf2_timestamps_s &ekf2_timestamps)
 {
 	// EKF GPS message
@@ -2480,6 +2564,9 @@ void EKF2::UpdateGpsSample(ekf2_timestamps_s &ekf2_timestamps)
 			_last_geoid_height_update_us = gnss_sample.time_us;
 		}
 
+		if (_ekf.control_status_flags().in_air &&  _ekf.getHeightSensorRef() == HeightSensor::GNSS) {
+			_gps_alt_drift.update(vehicle_gps_position, _gps_alt_drift_pub);
+		}
 	}
 }
 

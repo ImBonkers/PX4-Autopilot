@@ -114,6 +114,7 @@ set(msg_files
 	GpioIn.msg
 	GpioOut.msg
 	GpioRequest.msg
+	GpsAltitudeDriftCorrection.msg
 	GpsDump.msg
 	GpsInjectData.msg
 	Gripper.msg
