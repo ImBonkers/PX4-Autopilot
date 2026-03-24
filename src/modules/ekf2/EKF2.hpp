@@ -474,6 +474,7 @@ private:
 
 	struct GpsAltDriftDetector {
 		static constexpr int kWindowSize = 20; // roughly 20 seconds (at 1 Hz sample rate)
+		static constexpr int kStabilityWindow = 5; // samples to check for re-enable
 		static constexpr float kBaroLpfTimeConst = 3.f;
 		static constexpr float kDriftThreshold = 1.f; // [m]
 
@@ -488,9 +489,11 @@ private:
 		int wcount{0};
 		uint64_t last_sample_ts{0};
 		bool hit_pending{false};
+		bool altitude_good_for_local_control{true};
 
 		void updateBaroLpf(float baro_alt, uint64_t timestamp);
 		void update(const sensor_gps_s &gps, uORB::PublicationMulti<gps_altitude_drift_correction_s> &pub);
+		void reset();
 	};
 
 	GpsAltDriftDetector _gps_alt_drift{};

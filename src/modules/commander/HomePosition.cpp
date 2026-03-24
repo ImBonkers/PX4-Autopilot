@@ -352,7 +352,7 @@ void HomePosition::update(bool set_automatically, bool check_if_changed)
 	}
 
 	// Apply home altitude correction from GPS altitude drift detection
-	if (_gps_alt_drift_sub.updated()) {
+	if (_param_com_home_en.get() && _gps_alt_drift_sub.updated()) {
 		gps_altitude_drift_correction_s correction;
 		_gps_alt_drift_sub.copy(&correction);
 

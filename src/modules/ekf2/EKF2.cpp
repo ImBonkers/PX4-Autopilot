@@ -1618,6 +1618,7 @@ void EKF2::PublishLocalPosition(const hrt_abstime &timestamp)
 	lpos.heading_var = _ekf.getYawVar();
 	lpos.delta_heading = Eulerf(delta_q_reset).psi();
 	lpos.heading_good_for_control = _ekf.isYawFinalAlignComplete();
+	lpos.altitude_good_for_local_control = _gps_alt_drift.altitude_good_for_local_control;
 	lpos.tilt_var = _ekf.getTiltVariance();
 
 #if defined(CONFIG_EKF2_TERRAIN)
@@ -2414,8 +2415,9 @@ bool EKF2::UpdateFlowSample(ekf2_timestamps_s &ekf2_timestamps)
 #if defined(CONFIG_EKF2_GNSS)
 void EKF2::GpsAltDriftDetector::updateBaroLpf(float baro_alt, uint64_t timestamp)
 {
-	if (last_baro_ts != 0) {
-		const float dt = 1e-6f * (timestamp - last_baro_ts);
+	const float dt = 1e-6f * (timestamp - last_baro_ts);
+
+	if (last_baro_ts != 0 && dt < 1.f) {
 		baro_lpf.update(baro_alt, dt);
 
 	} else {
@@ -2427,14 +2429,9 @@ void EKF2::GpsAltDriftDetector::updateBaroLpf(float baro_alt, uint64_t timestamp
 
 void EKF2::GpsAltDriftDetector::update(const sensor_gps_s &gps, uORB::PublicationMulti<gps_altitude_drift_correction_s> &pub)
 {
-	const float gps_alt = static_cast<float>(gps.altitude_msl_m);
-	const bool gps_valid = (gps.fix_type >= 2)
-			       && (gps.eph < 5.f)
-			       && (gps.epv < 10.f)
-			       && (gps.s_variance_m_s < 1.f);
 	const bool gps_timeout = (last_gps_ts != 0) && (gps.timestamp - last_gps_ts > 500000);
 
-	if (gps_valid && (last_gps_ts != 0) && (last_baro_ts != 0) && !gps_timeout) {
+	if (!gps_timeout && (last_gps_ts != 0) && (last_baro_ts != 0)) {
 
 		vel_integral += 1e-6f * (gps.timestamp - last_gps_ts) * (-gps.vel_d_m_s);
 
@@ -2444,6 +2441,7 @@ void EKF2::GpsAltDriftDetector::update(const sensor_gps_s &gps, uORB::Publicatio
 					|| (gps.timestamp >= last_sample_ts + 1000000);
 
 		if (sample_due) {
+			const float gps_alt = static_cast<float>(gps.altitude_msl_m);
 			d1[widx] = gps_alt - baro_lpf.getState();
 			d2[widx] = gps_alt - vel_integral;
 
@@ -2464,8 +2462,7 @@ void EKF2::GpsAltDriftDetector::update(const sensor_gps_s &gps, uORB::Publicatio
 				const float c = fabsf((d1[newest] - d2[newest]) - (d1[oldest] - d2[oldest])); // change in (vel_integral - baro_alt) over window
 
 				// gps_alt drift has to have relevant magnitude and larger than vel-baro drift
-				const bool hit = (a > kDriftThreshold) && (b > kDriftThreshold)
-						 && (a > c) && (b > c);
+				const bool hit = (a > kDriftThreshold) && (b > kDriftThreshold) && (a > c) && (b > c);
 
 				// hit pending to filter out single outliers
 				if (hit && hit_pending) {
@@ -2474,22 +2471,41 @@ void EKF2::GpsAltDriftDetector::update(const sensor_gps_s &gps, uORB::Publicatio
 					correction.altitude_offset = d1[newest] - d1[oldest];
 					pub.publish(correction);
 					hit_pending = false;
+					altitude_good_for_local_control = false;
+					wcount = 0;
 
 				} else {
 					hit_pending = hit;
+				}
+
+				// Re-enable when recent samples show stability
+				if (!altitude_good_for_local_control && wcount >= kStabilityWindow) {
+					const int recent = (widx - kStabilityWindow + kWindowSize) % kWindowSize;
+					const float a_recent = fabsf(d1[newest] - d1[recent]);
+					const float b_recent = fabsf(d2[newest] - d2[recent]);
+
+					if ((a_recent < 0.2f * kDriftThreshold) && (b_recent < 0.2f * kDriftThreshold)) {
+						altitude_good_for_local_control = true;
+					}
 				}
 			}
 		}
 
 	} else {
-		vel_integral = 0.f;
-		wcount = 0;
-		widx = 0;
-		last_sample_ts = 0;
-		hit_pending = false;
+		reset();
 	}
 
 	last_gps_ts = gps.timestamp;
+}
+
+void EKF2::GpsAltDriftDetector::reset()
+{
+	vel_integral = 0.f;
+	wcount = 0;
+	widx = 0;
+	last_sample_ts = 0;
+	hit_pending = false;
+	altitude_good_for_local_control = true;
 }
 
 void EKF2::UpdateGpsSample(ekf2_timestamps_s &ekf2_timestamps)
@@ -2566,6 +2582,9 @@ void EKF2::UpdateGpsSample(ekf2_timestamps_s &ekf2_timestamps)
 
 		if (_ekf.control_status_flags().in_air &&  _ekf.getHeightSensorRef() == HeightSensor::GNSS) {
 			_gps_alt_drift.update(vehicle_gps_position, _gps_alt_drift_pub);
+
+		} else {
+			_gps_alt_drift.reset();
 		}
 	}
 }
