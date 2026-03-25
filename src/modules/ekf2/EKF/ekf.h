@@ -251,8 +251,14 @@ public:
 		const bool is_mag_alignment_in_flight_complete = is_using_mag
 				&& _control_status.flags.mag_aligned_in_flight
 				&& ((_time_delayed_us - _flt_mag_align_start_time) > (uint64_t)1e6);
+
+		// Allow heading control on the ground once yaw is aligned — the
+		// in-flight mag alignment gate is only required after takeoff.
+		const bool on_ground_yaw_ok = _control_status.flags.vehicle_at_rest
+					      && _control_status.flags.yaw_align;
+
 		return _control_status.flags.yaw_align
-		       && (is_mag_alignment_in_flight_complete || !is_using_mag);
+		       && (is_mag_alignment_in_flight_complete || !is_using_mag || on_ground_yaw_ok);
 #else
 		return _control_status.flags.yaw_align;
 #endif
