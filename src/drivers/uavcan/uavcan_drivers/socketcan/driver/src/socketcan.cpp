@@ -198,9 +198,11 @@ uavcan::int16_t CanIface::send(const uavcan::CanFrame &frame, uavcan::MonotonicT
 
 	if (res > 0) {
 		return 1;
-
 	} else {
-		return res;
+		if (errno == ENOBUFS || errno == EAGAIN || errno == EWOULDBLOCK) {
+			return 0; // Transmit queue is full, retry
+		}
+		return -1;
 	}
 }
 
@@ -210,7 +212,10 @@ uavcan::int16_t CanIface::receive(uavcan::CanFrame &out_frame, uavcan::Monotonic
 	int32_t result = recvmsg(_fd, &_recv_msg, MSG_DONTWAIT);
 
 	if (result < 0) {
-		return result;
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			return 0;
+		}
+		return -1;
 	}
 
 	/* Copy SocketCAN frame to CanardFrame */
@@ -245,7 +250,7 @@ uavcan::int16_t CanIface::receive(uavcan::CanFrame &out_frame, uavcan::Monotonic
 		out_ts_monotonic = uavcan::MonotonicTime::fromUSec(tv->tv_sec * 1000000ULL + tv->tv_usec);
 	}
 
-	return result;
+	return 1;
 }
 
 
