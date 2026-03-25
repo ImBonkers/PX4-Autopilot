@@ -1,0 +1,7 @@
+#!/bin/sh
+#
+# STM32N6 NUCLEO board sensors init
+#
+# No onboard sensors — Nucleo is a development board.
+# Sensor drivers can be started manually via NSH.
+#

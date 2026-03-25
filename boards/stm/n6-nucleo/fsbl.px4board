@@ -1,0 +1,17 @@
+# STM32N6 FSBL (First Stage Boot Loader) Configuration
+# This is a minimal configuration just to build the FSBL
+
+CONFIG_BOARD_TOOLCHAIN="arm-none-eabi"
+CONFIG_BOARD_ARCHITECTURE="cortex-m7"
+CONFIG_BOARD_NUTTX_CONFIG="nuttx-config"
+
+# FSBL specific settings
+CONFIG_BOARD_FSBL_ONLY=y
+CONFIG_BOARD_EXTERNAL_MEMORY=y
+CONFIG_BOARD_SRAM_SIZE=4194304
+
+# Custom FSBL build instead of full PX4
+CONFIG_BOARD_CUSTOM_TARGET=fsbl
+
+# Minimal modules for FSBL (none - it's bare metal)
+# FSBL doesn't need PX4 modules, just hardware initialization

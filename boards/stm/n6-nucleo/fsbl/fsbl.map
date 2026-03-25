@@ -1,0 +1,96 @@
+
+Discarded input sections
+
+ .text          0x00000000        0x0 fsbl_main.o
+ .data          0x00000000        0x0 fsbl_main.o
+ .bss           0x00000000        0x0 fsbl_main.o
+ .text.fsbl_main
+                0x00000000       0xfc fsbl_main.o
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+ROM              0x34180400         0x0003fc00         xrw
+RAM              0x341c0000         0x00040000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD fsbl_main.o
+
+.fsbl_header    0x34180400       0x40
+ *(.fsbl_header)
+ .fsbl_header   0x34180400       0x40 fsbl_main.o
+                0x34180400                fsbl_header
+                0x34180600                        . = 0x34180600
+
+.text
+ *(.text.fsbl_main)
+ *(.text*)
+ *(.rodata*)
+
+.glue_7         0x34180440        0x0
+ .glue_7        0x34180440        0x0 linker stubs
+
+.glue_7t        0x34180440        0x0
+ .glue_7t       0x34180440        0x0 linker stubs
+
+.vfp11_veneer   0x34180440        0x0
+ .vfp11_veneer  0x34180440        0x0 linker stubs
+
+.v4_bx          0x34180440        0x0
+ .v4_bx         0x34180440        0x0 linker stubs
+
+.data
+ *(.data*)
+
+.bss            0x341c0000        0x0 load address 0x34180440
+                0x341c0000                        __bss_start = .
+ *(.bss*)
+ *(COMMON)
+                0x341c0000                        __bss_end = .
+
+/DISCARD/
+ *(.ARM.exidx*)
+ *(.ARM.extab*)
+OUTPUT(fsbl_stm32n6.elf elf32-littlearm)
+LOAD linker stubs
+
+.debug_info     0x00000000      0x43a
+ .debug_info    0x00000000      0x43a fsbl_main.o
+
+.debug_abbrev   0x00000000      0x1ba
+ .debug_abbrev  0x00000000      0x1ba fsbl_main.o
+
+.debug_loclists
+                0x00000000       0x97
+ .debug_loclists
+                0x00000000       0x97 fsbl_main.o
+
+.debug_aranges  0x00000000       0x20
+ .debug_aranges
+                0x00000000       0x20 fsbl_main.o
+
+.debug_rnglists
+                0x00000000       0x4d
+ .debug_rnglists
+                0x00000000       0x4d fsbl_main.o
+
+.debug_line     0x00000000      0x224
+ .debug_line    0x00000000      0x224 fsbl_main.o
+
+.debug_str      0x00000000      0x2c8
+ .debug_str     0x00000000      0x2c8 fsbl_main.o
+                                0x306 (size before relaxing)
+
+.comment        0x00000000       0x26
+ .comment       0x00000000       0x26 fsbl_main.o
+                                 0x27 (size before relaxing)
+
+.ARM.attributes
+                0x00000000       0x32
+ .ARM.attributes
+                0x00000000       0x32 fsbl_main.o
+
+.debug_frame    0x00000000       0x20
+ .debug_frame   0x00000000       0x20 fsbl_main.o

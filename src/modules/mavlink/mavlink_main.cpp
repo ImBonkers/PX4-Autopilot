@@ -2362,6 +2362,14 @@ Mavlink::task_main(int argc, char *argv[])
 		PX4_ERR("configure_streams_to_default() failed");
 	}
 
+	/* Force HIL enabled at startup if SYS_HITL is set.
+	 * Avoids race where HIL_SENSOR messages arrive before Commander
+	 * publishes vehicle_status with hil_state=ON.
+	 */
+	if (_param_sys_hitl.get() > 0) {
+		set_hil_enabled(true);
+	}
+
 	/* set main loop delay depending on data rate to minimize CPU overhead */
 	_main_loop_delay = (MAIN_LOOP_DELAY * 1000) / _datarate;
 

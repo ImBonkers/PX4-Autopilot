@@ -1,0 +1,5 @@
+add_subdirectory(adc)
+add_subdirectory(../stm32_common/board_critmon board_critmon)
+add_subdirectory(../stm32_common/board_reset board_reset)
+add_subdirectory(hrt)
+add_subdirectory(version)

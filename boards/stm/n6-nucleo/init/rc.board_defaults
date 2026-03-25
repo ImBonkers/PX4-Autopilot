@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# STM32N6 NUCLEO board defaults
+# NOTE: This board uses a custom rcS — all params are set there.
+#

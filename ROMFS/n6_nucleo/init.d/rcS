@@ -1,0 +1,79 @@
+#!/bin/sh
+#
+# PX4 startup script for STM32N6 NUCLEO - HIL Quadcopter
+#
+set +e
+
+param import
+
+# HIL mode — quadrotor
+param set SYS_HITL 1
+param set SYS_AUTOSTART 1001
+param set MAV_TYPE 2
+
+# Quad rotor geometry (jMAVSim Iris)
+param set CA_AIRFRAME 0
+param set CA_ROTOR_COUNT 4
+param set CA_ROTOR0_PX 0.1515
+param set CA_ROTOR0_PY 0.245
+param set CA_ROTOR0_KM 0.05
+param set CA_ROTOR1_PX -0.1515
+param set CA_ROTOR1_PY -0.1875
+param set CA_ROTOR1_KM 0.05
+param set CA_ROTOR2_PX 0.1515
+param set CA_ROTOR2_PY -0.245
+param set CA_ROTOR2_KM -0.05
+param set CA_ROTOR3_PX -0.1515
+param set CA_ROTOR3_PY 0.1875
+param set CA_ROTOR3_KM -0.05
+param set HIL_ACT_FUNC1 101
+param set HIL_ACT_FUNC2 102
+param set HIL_ACT_FUNC3 103
+param set HIL_ACT_FUNC4 104
+
+# Disable checks (no SD card, no power monitor, no barometer)
+param set COM_ARM_SDCARD 0
+param set SYS_HAS_BARO 0
+param set COM_POWER_COUNT 0
+param set CBRK_SUPPLY_CHK 894281
+param set COM_CPU_MAX 0
+param set COM_RAM_MAX 0
+
+# Relaxed EKF/safety checks for HIL
+param set COM_ARM_WO_GPS 1
+param set CBRK_VELPOSERR 201607
+param set EKF2_GPS_CHECK 0
+param set CBRK_FLIGHTTERM 121212
+param set COM_DISARM_PRFLT 0
+param set NAV_DLL_ACT 0
+param set NAV_RCL_ACT 0
+
+# Motor idle/disarm: zero output when disarmed
+param set COM_DISARM_LAND 2
+param set MPC_THR_IDLE 0
+
+# Mag: heading-only fusion, no calibration check (simulated mag)
+param set EKF2_MAG_TYPE 1
+param set COM_ARM_MAG_ANG 0
+param set CAL_MAG0_ID 197388
+param set CAL_MAG0_PRIO 50
+param set EKF2_MAG_CHECK 0
+
+# Start everything. Sensors module retries VehicleIMU init every 500ms
+# until jMAVSim provides HIL_SENSOR data. No sleeps needed.
+dataman start -r
+load_mon start
+sensors start -h
+ekf2 start &
+commander start -h
+pwm_out_sim start -m hil
+control_allocator start
+mc_rate_control start
+mc_att_control start
+mc_hover_thrust_estimator start
+flight_mode_manager start
+mc_pos_control start
+land_detector start multicopter
+navigator start
+mavlink start -d /dev/ttyACM0 -b 921600 -r 10000 &
+mavlink boot_complete

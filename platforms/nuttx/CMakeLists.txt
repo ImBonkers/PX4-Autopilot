@@ -370,6 +370,9 @@ else()
 		-Wl,--warn-common
 		-Wl,--gc-sections
 
+		# STM32N6: wrap __start to clear MSPLIM/PSPLIM before stack use
+		$<$<BOOL:${CONFIG_ARCH_CHIP_STM32N6}>:-Wl,--wrap=__start>
+
 		-Wl,--start-group
 			${nuttx_libs}
 		-Wl,--end-group

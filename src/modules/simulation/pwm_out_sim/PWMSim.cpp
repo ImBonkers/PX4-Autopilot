@@ -110,6 +110,24 @@ void PWMSim::Run()
 
 	_mixing_output.update();
 
+	/* In HIL mode, publish disarmed outputs periodically even without
+	 * actuator input.  This keeps the simulator alive (jMAVSim resets
+	 * if it doesn't receive HIL_ACTUATOR_CONTROLS within ~3 seconds).
+	 */
+	const hrt_abstime now = hrt_absolute_time();
+
+	if (now - _last_output_time > 100000 /* 100ms / 10Hz */) {
+		_last_output_time = now;
+
+		actuator_outputs_s outputs{};
+		outputs.noutputs = MAX_ACTUATORS;
+		outputs.timestamp = now;
+		_actuator_outputs_sim_pub.publish(outputs);
+
+		/* Re-schedule ourselves if no actuator input is driving us */
+		ScheduleDelayed(100_ms);
+	}
+
 	// check for parameter updates
 	if (_parameter_update_sub.updated()) {
 		parameter_update_s pupdate;
@@ -150,6 +168,7 @@ int PWMSim::task_spawn(int argc, char *argv[])
 	desc.object.store(instance);
 	desc.task_id = task_id_is_work_queue;
 	instance->ScheduleNow();
+	instance->ScheduleDelayed(100_ms);  /* Ensure periodic output even without input */
 	return 0;
 }
 
