@@ -1183,6 +1183,7 @@ void Logger::handle_vehicle_command_update()
 	vehicle_command_s command;
 
 	if (_vehicle_command_sub.update(&command)) {
+		PX4_DEBUG("logger got cmd %u", (unsigned)command.command);
 
 		if (command.command == vehicle_command_s::VEHICLE_CMD_LOGGING_START) {
 

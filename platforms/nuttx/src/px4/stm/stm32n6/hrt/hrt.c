@@ -1,6 +1,9 @@
 /****************************************************************************
  * STM32N6 High Resolution Timer — TIM5 hardware implementation
  *
+ * Ported from platforms/nuttx/src/px4/stm/stm32_common/hrt/hrt.c
+ * Adapted for STM32N6 TIM5 (32-bit, APB1).
+ *
  * TIM5 is a 32-bit general purpose timer on APB1.
  * Configured as free-running 1MHz counter (1us resolution).
  * CC1 used for callout scheduling (output compare interrupt).
@@ -36,9 +39,11 @@
 #define rPSC   (*(volatile uint32_t *)(HRT_TIMER_BASE + STM32_GTIM_PSC_OFFSET))
 #define rARR   (*(volatile uint32_t *)(HRT_TIMER_BASE + STM32_GTIM_ARR_OFFSET))
 #define rCCR1  (*(volatile uint32_t *)(HRT_TIMER_BASE + STM32_GTIM_CCR1_OFFSET))
-#define rCCMR1 (*(volatile uint32_t *)(HRT_TIMER_BASE + STM32_GTIM_CCMR1_OFFSET))
-#define rCCER  (*(volatile uint32_t *)(HRT_TIMER_BASE + STM32_GTIM_CCER_OFFSET))
 #define rEGR   (*(volatile uint32_t *)(HRT_TIMER_BASE + 0x0014))
+
+/* Minimum/maximum compare intervals */
+#define HRT_INTERVAL_MIN   50        /* 50 us */
+#define HRT_INTERVAL_MAX   50000     /* 50 ms */
 
 /* Callout queue */
 static struct sq_queue_s callout_queue;
@@ -52,14 +57,8 @@ hrt_abstime hrt_absolute_time(void)
 	return (hrt_abstime)rCNT;
 }
 
-/* Minimum compare interval — avoids setting CCR1 in the past */
-#define HRT_INTERVAL_MIN   50        /* 50 µs */
-
-/* Maximum compare interval — safety net to keep callouts flowing */
-#define HRT_INTERVAL_MAX   50000     /* 50 ms */
-
 /****************************************************************************
- * Internal: set CC1 for next deadline or a safety-net max interval
+ * hrt_call_reschedule — set CC1 for next deadline (reference impl)
  ****************************************************************************/
 
 static void hrt_call_reschedule(void)
@@ -68,10 +67,10 @@ static void hrt_call_reschedule(void)
 	struct hrt_call *next = (struct hrt_call *)sq_peek(&callout_queue);
 	hrt_abstime deadline = now + HRT_INTERVAL_MAX;
 
-	if (next) {
+	if (next != NULL) {
 		if (next->deadline <= (now + HRT_INTERVAL_MIN)) {
-			/* Already expired or about to — fire ASAP */
 			deadline = now + HRT_INTERVAL_MIN;
+
 		} else if (next->deadline < deadline) {
 			deadline = next->deadline;
 		}
@@ -83,7 +82,83 @@ static void hrt_call_reschedule(void)
 }
 
 /****************************************************************************
- * TIM5 CC1 interrupt handler — dispatch expired callouts
+ * hrt_call_enter — insert entry sorted into callout queue
+ ****************************************************************************/
+
+static void hrt_call_enter(struct hrt_call *entry)
+{
+	struct hrt_call *call, *next;
+
+	call = (struct hrt_call *)sq_peek(&callout_queue);
+
+	if ((call == NULL) || (entry->deadline < call->deadline)) {
+		sq_addfirst(&entry->link, &callout_queue);
+		/* we changed the next deadline, reschedule the timer event */
+		hrt_call_reschedule();
+
+	} else {
+		do {
+			next = (struct hrt_call *)sq_next(&call->link);
+
+			if ((next == NULL) || (entry->deadline < next->deadline)) {
+				sq_addafter(&call->link, &entry->link, &callout_queue);
+				break;
+			}
+		} while ((call = next) != NULL);
+	}
+}
+
+/****************************************************************************
+ * hrt_call_invoke — dispatch expired callouts (reference impl)
+ ****************************************************************************/
+
+static void hrt_call_invoke(void)
+{
+	struct hrt_call *call;
+	hrt_abstime deadline;
+
+	while (true) {
+		hrt_abstime now = hrt_absolute_time();
+
+		call = (struct hrt_call *)sq_peek(&callout_queue);
+
+		if (call == NULL) {
+			break;
+		}
+
+		if (call->deadline > now) {
+			break;
+		}
+
+		sq_rem(&call->link, &callout_queue);
+
+		/* save the intended deadline for periodic calls */
+		deadline = call->deadline;
+
+		/* zero the deadline, as the call has occurred */
+		call->deadline = 0;
+
+		/* invoke the callout (if there is one) */
+		if (call->callout) {
+			call->callout(call->arg);
+		}
+
+		/* if the callout has a non-zero period, it has to be re-entered */
+		if (call->period != 0) {
+			/* re-check call->deadline to allow for
+			 * callouts to re-schedule themselves
+			 * using hrt_call_delay() */
+			if (call->deadline <= now) {
+				call->deadline = deadline + call->period;
+			}
+
+			hrt_call_enter(call);
+		}
+	}
+}
+
+/****************************************************************************
+ * TIM5 CC1 interrupt handler
  ****************************************************************************/
 
 static int hrt_tim_isr(int irq, void *context, void *arg)
@@ -97,51 +172,10 @@ static int hrt_tim_isr(int irq, void *context, void *arg)
 	if (sr & (1 << 1)) {  /* CC1IF */
 		rSR = ~(1 << 1);  /* Clear CC1IF */
 
-		hrt_abstime now = hrt_absolute_time();
+		/* run any callouts that have met their deadline */
+		hrt_call_invoke();
 
-		while (sq_peek(&callout_queue) != NULL) {
-			struct hrt_call *entry =
-				(struct hrt_call *)sq_peek(&callout_queue);
-
-			if ((int32_t)(entry->deadline - now) > 0) {
-				break;  /* Not yet due (handles wrap) */
-			}
-
-			sq_remfirst(&callout_queue);
-
-			hrt_callout cb = entry->callout;
-			void *cb_arg = entry->arg;
-			hrt_abstime period = entry->period;
-
-			if (cb) {
-				cb(cb_arg);
-			}
-
-			/* Re-arm periodic */
-			if (period > 0 && entry->callout) {
-				entry->deadline = hrt_absolute_time() + period;
-
-				/* Insert sorted */
-				struct hrt_call *p = NULL;
-				struct hrt_call *n =
-					(struct hrt_call *)sq_peek(&callout_queue);
-
-				while (n && (int32_t)(n->deadline - entry->deadline) <= 0) {
-					p = n;
-					n = (struct hrt_call *)sq_next(&n->link);
-				}
-
-				if (p == NULL) {
-					sq_addfirst(&entry->link, &callout_queue);
-				} else {
-					sq_addafter(&p->link, &entry->link,
-						    &callout_queue);
-				}
-			}
-
-			now = hrt_absolute_time();
-		}
-
+		/* and schedule the next interrupt */
 		hrt_call_reschedule();
 	}
 
@@ -149,63 +183,82 @@ static int hrt_tim_isr(int irq, void *context, void *arg)
 }
 
 /****************************************************************************
- * hrt_call_after
+ * hrt_call_internal — common implementation for call_after/call_at/call_every
+ ****************************************************************************/
+
+static void
+hrt_call_internal(struct hrt_call *entry, hrt_abstime deadline,
+		  hrt_abstime interval, hrt_callout callout, void *arg)
+{
+	irqstate_t flags = enter_critical_section();
+
+	/* if the entry is currently queued, remove it */
+	if (entry->deadline != 0) {
+		sq_rem(&entry->link, &callout_queue);
+	}
+
+	entry->deadline = deadline;
+	entry->period = interval;
+	entry->callout = callout;
+	entry->arg = arg;
+
+	hrt_call_enter(entry);
+
+	leave_critical_section(flags);
+}
+
+/****************************************************************************
+ * Public API — matches reference stm32_common/hrt/hrt.c
  ****************************************************************************/
 
 void hrt_call_after(struct hrt_call *entry, hrt_abstime delay,
 		    hrt_callout callout, void *arg)
 {
-	irqstate_t flags = enter_critical_section();
-
-	sq_rem(&entry->link, &callout_queue);
-
-	entry->callout = callout;
-	entry->arg = arg;
-	entry->period = 0;
-	entry->deadline = hrt_absolute_time() + delay;
-
-	/* Insert sorted by deadline */
-	struct hrt_call *p = NULL;
-	struct hrt_call *n = (struct hrt_call *)sq_peek(&callout_queue);
-
-	while (n && (int32_t)(n->deadline - entry->deadline) <= 0) {
-		p = n;
-		n = (struct hrt_call *)sq_next(&n->link);
-	}
-
-	if (p == NULL) {
-		sq_addfirst(&entry->link, &callout_queue);
-	} else {
-		sq_addafter(&p->link, &entry->link, &callout_queue);
-	}
-
-	hrt_call_reschedule();
-	leave_critical_section(flags);
+	hrt_call_internal(entry,
+			  hrt_absolute_time() + delay,
+			  0,
+			  callout,
+			  arg);
 }
 
-/****************************************************************************
- * hrt_call_every
- ****************************************************************************/
+void hrt_call_at(struct hrt_call *entry, hrt_abstime calltime,
+		 hrt_callout callout, void *arg)
+{
+	hrt_call_internal(entry, calltime, 0, callout, arg);
+}
 
 void hrt_call_every(struct hrt_call *entry, hrt_abstime delay,
 		    hrt_abstime interval, hrt_callout callout, void *arg)
 {
-	entry->period = interval;
-	hrt_call_after(entry, delay, callout, arg);
+	hrt_call_internal(entry,
+			  hrt_absolute_time() + delay,
+			  interval,
+			  callout,
+			  arg);
 }
 
-/****************************************************************************
- * hrt_cancel
- ****************************************************************************/
+bool hrt_called(struct hrt_call *entry)
+{
+	return (entry->deadline == 0);
+}
 
 void hrt_cancel(struct hrt_call *entry)
 {
 	irqstate_t flags = enter_critical_section();
+
 	sq_rem(&entry->link, &callout_queue);
-	entry->callout = NULL;
+	entry->deadline = 0;
+
+	/* if this is a periodic call being removed by the callout, prevent it
+	 * from being re-entered when the callout returns. */
 	entry->period = 0;
-	hrt_call_reschedule();
+
 	leave_critical_section(flags);
+}
+
+void hrt_call_delay(struct hrt_call *entry, hrt_abstime delay)
+{
+	entry->deadline = hrt_absolute_time() + delay;
 }
 
 void hrt_call_init(struct hrt_call *entry)
@@ -241,7 +294,7 @@ void hrt_init(void)
 	/* Clear status */
 	rSR = 0;
 
-	/* Set initial CC1 compare a short ways out so first ISR fires */
+	/* Set initial CC1 compare a little ways out */
 	rCCR1 = 1000;
 	rDIER = (1 << 1);  /* CC1IE */
 
@@ -249,7 +302,7 @@ void hrt_init(void)
 	irq_attach(HRT_TIMER_IRQ, hrt_tim_isr, NULL);
 	up_enable_irq(HRT_TIMER_IRQ);
 
-	/* Start timer (upcounting, no other features) */
+	/* Start timer */
 	rCR1 = 1;  /* CEN */
 }
 
