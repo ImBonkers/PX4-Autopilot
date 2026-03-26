@@ -75,5 +75,7 @@ flight_mode_manager start
 mc_pos_control start
 land_detector start multicopter
 navigator start
+npu
+npu duty 0
 mavlink start -d /dev/ttyACM0 -b 921600 -r 20000 &
 mavlink boot_complete

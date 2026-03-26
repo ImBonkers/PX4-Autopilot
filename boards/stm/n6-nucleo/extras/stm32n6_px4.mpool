@@ -39,7 +39,7 @@
 				"prop":   { "rights": "ACC_WRITE", "throughput": "MID",  "latency": "MID", "byteWidth": 8, "freqRatio": 2.50, "read_power": 17.324, "write_power": 15.321 },
 				"offset": { "value": "0x34100000", "magnitude":  "BYTES" },
 				"size":   { "value": "0",       "magnitude": "KBYTES" },
-				"_comment": "AXISRAM2 reserved for PX4 heap — excluded from NPU"
+				"_comment": "AXISRAM2 reserved for PX4 heap - excluded from NPU"
 			},
 			{
 				"fname": "AXISRAM3",
