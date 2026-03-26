@@ -6,7 +6,7 @@ set +e
 
 param import
 
-# HIL mode — quadrotor
+# HIL mode - quadrotor
 param set SYS_HITL 1
 param set SYS_AUTOSTART 1001
 param set MAV_TYPE 2

@@ -37,6 +37,7 @@ px4_add_module(
 	SRCS
 		LoadMon.cpp
 		LoadMon.hpp
+		nuttx_cpuload.c
 	DEPENDS
 		px4_work_queue
 )

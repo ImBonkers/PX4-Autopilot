@@ -1,0 +1,6 @@
+menuconfig MODULES_NPU_INFERENCE
+	bool "npu_inference"
+	default n
+	---help---
+		NPU inference benchmark module. Runs YOLOv8n on fake data
+		and reports timing via MAVLink STATUSTEXT.

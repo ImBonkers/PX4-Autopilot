@@ -14,6 +14,7 @@ add_library(drivers_board
 	stm32_pwm.c
 	stm32_usbdev.c
 	stm32_xspi.c
+	stm32_npu.c
 
 	# PX4 bus configuration
 	spi.cpp
@@ -28,4 +29,5 @@ target_link_libraries(drivers_board
 		nuttx_arch
 		nuttx_drivers
 		px4_layer
+		$ENV{HOME}/STMicroelectronics/STEdgeAI3/3.0/Middlewares/ST/AI/Lib/GCC/ARMCortexM55/NetworkRuntime1100_CM55_GCC.a
 )

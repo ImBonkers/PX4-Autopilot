@@ -34,6 +34,10 @@
 #include "LoadMon.hpp"
 
 #if defined(__PX4_NUTTX)
+extern "C" int nuttx_get_idle_cpuload(unsigned long *active, unsigned long *total);
+#endif
+
+#if defined(__PX4_NUTTX)
 // if free stack space falls below this, print a warning
 #if defined(CONFIG_ARMV7M_STACKCHECK)
 static constexpr unsigned STACK_LOW_WARNING_THRESHOLD = 100;
@@ -141,27 +145,15 @@ void LoadMon::cpuload()
 	const float interval_spent_time = spent_time_stamp - _last_spent_time_stamp;
 #elif defined(__PX4_NUTTX)
 
-	if (_last_idle_time == 0) {
-		irqstate_t irqstate = enter_critical_section();
-		// Just get the time in the first iteration */
-		_last_idle_time = system_load.tasks[0].total_runtime;
-		_last_idle_time_sample = system_load.tasks[0].curr_start_time;
-		leave_critical_section(irqstate);
+	/* Use NuttX clock_cpuload() via C wrapper (avoids cpuload_s name
+	 * collision with uORB). This uses tick-based sampling so blocked/
+	 * sleeping tasks properly count as idle. */
+	unsigned long idle_active = 0, idle_total = 0;
+	nuttx_get_idle_cpuload(&idle_active, &idle_total);
+
+	if (idle_total == 0) {
 		return;
 	}
-
-	irqstate_t irqstate = enter_critical_section();
-	const hrt_abstime now = system_load.tasks[0].curr_start_time;
-	const hrt_abstime total_runtime = system_load.tasks[0].total_runtime;
-	leave_critical_section(irqstate);
-
-	if ((now == _last_idle_time_sample) || (total_runtime == _last_idle_time)) {
-		return;
-	}
-
-	// compute system load
-	const float interval = now - _last_idle_time_sample;
-	const float interval_idletime = total_runtime - _last_idle_time;
 #endif
 
 	cpuload_s cpuload{};
@@ -230,7 +222,7 @@ void LoadMon::cpuload()
 	// get ram usage
 	struct mallinfo mem = mallinfo();
 	cpuload.ram_usage = (float)mem.uordblks / mem.arena;
-	cpuload.load = 1.f - interval_idletime / interval;
+	cpuload.load = 1.f - (float)idle_active / (float)idle_total;
 #elif defined(__PX4_QURT)
 	cpuload.ram_usage = 0.0f;
 	cpuload.load = px4muorb_get_cpu_load() / 100.0f;
@@ -243,9 +235,6 @@ void LoadMon::cpuload()
 #if defined(__PX4_LINUX)
 	_last_total_time_stamp = total_time_stamp;
 	_last_spent_time_stamp = spent_time_stamp;
-#elif defined(__PX4_NUTTX)
-	_last_idle_time = total_runtime;
-	_last_idle_time_sample = now;
 #endif
 }
 
