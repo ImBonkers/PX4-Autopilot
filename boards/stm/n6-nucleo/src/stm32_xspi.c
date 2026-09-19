@@ -65,21 +65,24 @@
  *  Region  | Flash Addr  | Block Offset | Blocks | Size
  *  --------|-------------|--------------|--------|------
  *  FSBL    | 0x70000000  | 0            | 512    | 128KB
- *  NuttX   | 0x70020000  | 512          | 4096   | 1MB
- *  NPU     | 0x70120000  | 4608         | 65536  | 16MB
- *  FS      | 0x71120000  | 70144        | rest   | ~47MB
+ *  NuttX   | 0x70020000  | 512          | 8192   | 2MB
+ *  NPU     | 0x70220000  | 8704         | 65536  | 16MB
+ *  FS      | 0x71220000  | 74240        | rest   | ~46MB
+ *
+ * NPU weights are flashed at 0x71000000 (hardcoded in model code), which
+ * lies inside the NPU partition (0x70220000-0x71220000).
  */
 
 #define FLASH_FSBL_FIRSTBLK    0
 #define FLASH_FSBL_NBLOCKS     512       /* 128KB / 256 */
 
 #define FLASH_NUTTX_FIRSTBLK   512
-#define FLASH_NUTTX_NBLOCKS    4096      /* 1MB / 256 */
+#define FLASH_NUTTX_NBLOCKS    8192      /* 2MB / 256 */
 
-#define FLASH_NPU_FIRSTBLK     4608
+#define FLASH_NPU_FIRSTBLK     8704
 #define FLASH_NPU_NBLOCKS      65536     /* 16MB / 256 */
 
-#define FLASH_FS_FIRSTBLK      70144
+#define FLASH_FS_FIRSTBLK      74240
 
 /****************************************************************************
  * Private Functions
@@ -262,7 +265,7 @@ int stm32_xspi_setup(void)
   if (part != NULL)
     {
       register_mtddriver("/dev/mtdblock3", part, 0755, NULL);
-      finfo("XSPI2 flash partitioned: fsbl=128K nuttx=1M npu=16M fs=%ldK\n",
+      finfo("XSPI2 flash partitioned: fsbl=128K nuttx=2M npu=16M fs=%ldK\n",
             (long)((totalblocks - FLASH_FS_FIRSTBLK) * geo.blocksize / 1024));
     }
 

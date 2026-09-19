@@ -1,5 +1,16 @@
 #!/bin/sh
 #
 # STM32N6 NUCLEO board defaults
-# NOTE: This board uses a custom rcS — all params are set there.
+# Matched to Pixhawk 6C (fmu-v6c) where applicable.
 #
+
+param set-default BAT1_V_DIV 18.1
+param set-default BAT2_V_DIV 18.1
+
+param set-default BAT1_A_PER_V 36.367515152
+param set-default BAT2_A_PER_V 36.367515152
+
+# NPU inference uses ARM WFE sleep during HW epochs but NuttX
+# charges SysTick ISR time to the sleeping task, inflating
+# reported CPU load.  Disable CPU load preflight check.
+param set COM_CPU_MAX -1.0

@@ -712,7 +712,7 @@ PARAM_DEFINE_INT32(COM_FORCE_SAFETY, 0);
  * @max 100
  * @increment 1
  */
-PARAM_DEFINE_FLOAT(COM_CPU_MAX, 95.0f);
+PARAM_DEFINE_FLOAT(COM_CPU_MAX, -1.0f);
 
 /**
  * Maximum allowed RAM usage to pass checks

@@ -155,6 +155,7 @@
 # include "streams/HIGH_LATENCY2.hpp"
 # include "streams/LINK_NODE_STATUS.hpp"
 # include "streams/NAMED_VALUE_FLOAT.hpp"
+# include "streams/NPU_STATUS.hpp"
 # include "streams/ODOMETRY.hpp"
 # include "streams/SCALED_PRESSURE2.hpp"
 # include "streams/SCALED_PRESSURE3.hpp"
@@ -395,6 +396,9 @@ static const StreamListItem streams_list[] = {
 #if defined(NAMED_VALUE_FLOAT_HPP)
 	create_stream_list_item<MavlinkStreamNamedValueFloat>(),
 #endif // NAMED_VALUE_FLOAT_HPP
+#if defined(NPU_STATUS_HPP)
+	create_stream_list_item<MavlinkStreamNpuStatus>(),
+#endif // NPU_STATUS_HPP
 #if defined(DEBUG_HPP)
 	create_stream_list_item<MavlinkStreamDebug>(),
 #endif // DEBUG_HPP

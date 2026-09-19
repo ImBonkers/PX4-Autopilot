@@ -147,6 +147,7 @@ set(msg_files
 	NavigatorStatus.msg
 	NeuralControl.msg
 	NormalizedUnsignedSetpoint.msg
+	NpuStatus.msg
 	ObstacleDistance.msg
 	OffboardControlMode.msg
 	OnboardComputerStatus.msg

@@ -112,3 +112,8 @@ keys/
 
 # metadata
 _emscripten_sdk/
+
+# Local build/demo artifacts
+px4_venv/
+_preserved_bin/
+st_ai_ws/

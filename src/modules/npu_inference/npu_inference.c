@@ -21,13 +21,16 @@
 #include <drivers/drv_hrt.h>
 #include <parameters/param.h>
 #include <uORB/uORB.h>
-#include <uORB/topics/debug_key_value.h>
+#include <uORB/topics/npu_status.h>
 
 /* AIE ioctl commands -- match NuttX ai_engine enum + stm32_npu.h */
 #define AIE_CMD_LOAD        0
 #define AIE_CMD_FEED_INPUT  1
 #define AIE_CMD_GET_OUTPUT  2
 #define NPUIOC_RUN_SYNC     0x100
+
+extern int npu_irq_handler(int irq, void *context, void *arg);
+
 
 /* Input: 192x192x3 INT8, Output: 756x5 INT8 */
 #define INPUT_SIZE   110592
@@ -74,14 +77,41 @@ static int npu_inference_thread(int argc, char *argv[])
 	_max_us = 0;
 	_start_time = hrt_absolute_time();
 
-	/* Publish inference stats as NAMED_VALUE_FLOAT via debug_key_value */
-	orb_advert_t dbg_pub = orb_advertise(ORB_ID(debug_key_value), NULL);
+	/* Publish all NPU stats in a single npu_status uORB topic.
+	 * The MAVLink NPU_STATUS stream converts it to 4 NAMED_VALUE_FLOAT
+	 * messages atomically — no single-instance overwrite race. */
+	orb_advert_t npu_pub = orb_advertise(ORB_ID(npu_status), NULL);
 	hrt_abstime last_publish = 0;
 
 	/* Parameter handle for MAVLink-settable duty cycle */
 	param_t duty_param = param_find("NPU_DUTY_PCT");
 
 	while (_running) {
+		/* Check duty cycle BEFORE inference — duty=0 at boot means
+		 * pause immediately.  Prevents holding XSPI2 mmap lock in
+		 * sem_wait when the NPU ISR hasn't been tested yet.
+		 */
+
+		if (_duty_pct == 0) {
+			while (_duty_pct == 0 && _running) {
+				int32_t param_duty = 0;
+
+				if (duty_param != PARAM_INVALID) {
+					param_get(duty_param, &param_duty);
+
+					if (param_duty > 0 && param_duty <= 100) {
+						_duty_pct = param_duty;
+					}
+				}
+
+				usleep(100000);
+			}
+
+			if (!_running) {
+				break;
+			}
+		}
+
 		hrt_abstime start = hrt_absolute_time();
 
 		ret = ioctl(fd, AIE_CMD_FEED_INPUT, (uintptr_t)input);
@@ -123,27 +153,38 @@ static int npu_inference_thread(int argc, char *argv[])
 			}
 
 		} else if (_duty_pct == 0) {
-			/* Paused — poll param until duty changes */
-			while (_duty_pct == 0 && _running) {
-				int32_t param_duty = 0;
+			/* Paused — handled at top of loop */
+			continue;
+		}
 
-				if (duty_param != PARAM_INVALID) {
-					param_get(duty_param, &param_duty);
+		/* Publish NPU stats at ~1Hz with wall fps over the last interval */
+		{
+			static hrt_abstime last_pub_time = 0;
+			static int last_pub_count = 0;
+			hrt_abstime pub_now = hrt_absolute_time();
 
-					if (param_duty > 0 && param_duty <= 100) {
-						_duty_pct = param_duty;
-					}
-				}
+			if (pub_now - last_pub_time >= 1000000) {
+				int delta_count = _run_count - last_pub_count;
+				float delta_s = (float)(pub_now - last_pub_time) / 1e6f;
+				float wall_fps = delta_s > 0.f ? delta_count / delta_s : 0.f;
 
-				usleep(100000);
+				struct npu_status_s npu = {0};
+				npu.timestamp = pub_now;
+				npu.inference_ms = (float)_last_us / 1000.f;
+				npu.fps = wall_fps;
+				npu.avg_ms = _run_count > 0 ? (float)(_total_us / _run_count) / 1000.f : 0.f;
+				npu.duty_pct = (uint8_t)_duty_pct;
+				orb_publish(ORB_ID(npu_status), npu_pub, &npu);
+
+				last_pub_time = pub_now;
+				last_pub_count = _run_count;
 			}
 		}
 
-		/* Poll parameter + publish stats every ~1s */
+		/* Poll parameter for duty cycle changes every ~1s */
 		hrt_abstime now = hrt_absolute_time();
 
 		if (now - last_publish > 1000000) {
-			/* Check if duty cycle changed via MAVLink PARAM_SET */
 			int32_t param_duty = 0;
 
 			if (duty_param != PARAM_INVALID) {
@@ -153,30 +194,6 @@ static int npu_inference_thread(int argc, char *argv[])
 					_duty_pct = param_duty;
 				}
 			}
-			struct debug_key_value_s dbg = {0};
-			dbg.timestamp = now;
-
-			strncpy(dbg.key, "npu_ms", 10);
-			dbg.value = (float)elapsed / 1000.f;
-			orb_publish(ORB_ID(debug_key_value), dbg_pub, &dbg);
-			usleep(10);  /* let MAVLink pick it up */
-
-			strncpy(dbg.key, "npu_fps", 10);
-			dbg.value = _run_count > 0 ? 1e6f / ((float)_total_us / _run_count) : 0.f;
-			dbg.timestamp = hrt_absolute_time();
-			orb_publish(ORB_ID(debug_key_value), dbg_pub, &dbg);
-			usleep(10);
-
-			strncpy(dbg.key, "npu_avg", 10);
-			dbg.value = _run_count > 0 ? (float)(_total_us / _run_count) / 1000.f : 0.f;
-			dbg.timestamp = hrt_absolute_time();
-			orb_publish(ORB_ID(debug_key_value), dbg_pub, &dbg);
-			usleep(10);
-
-			strncpy(dbg.key, "npu_duty", 10);
-			dbg.value = (float)_duty_pct;
-			dbg.timestamp = hrt_absolute_time();
-			orb_publish(ORB_ID(debug_key_value), dbg_pub, &dbg);
 
 			last_publish = now;
 		}
@@ -216,6 +233,38 @@ __EXPORT int npu_main(int argc, char *argv[])
 				 wall_s > 0.0 ? _run_count / wall_s : 0.0,
 				 _run_count > 0 ? 1e6 / (double)(_total_us / _run_count) : 0.0);
 		}
+
+		return 0;
+	}
+
+	if (argc > 1 && !strcmp(argv[1], "irqdbg")) {
+		/* Test: software-pend NPU0 IRQ and see if handler survives */
+
+		volatile uint32_t *nvic_iser1 = (volatile uint32_t *)0xE000E104;
+		volatile uint32_t *nvic_ispr1 = (volatile uint32_t *)0xE000E204;
+		volatile uint32_t *nvic_icer1 = (volatile uint32_t *)0xE000E184;
+
+		irq_attach(69, npu_irq_handler, NULL);
+
+		PX4_INFO("Handler attached. ISER1=0x%08lx ISPR1=0x%08lx",
+			 (unsigned long)*nvic_iser1,
+			 (unsigned long)*nvic_ispr1);
+
+		PX4_INFO("Software-pending IRQ 53...");
+		*nvic_ispr1 = (1u << 21);     /* set pending */
+		*nvic_iser1 = (1u << 21);     /* enable — should fire NOW */
+		__asm__ volatile ("dsb sy; isb");
+
+		/* If we get here, the ISR ran and returned without crashing */
+		PX4_INFO("After: ISER1=0x%08lx ISPR1=0x%08lx",
+			 (unsigned long)*nvic_iser1,
+			 (unsigned long)*nvic_ispr1);
+
+		PX4_INFO("Survived! Pending cleared=%d",
+			 (int)(((*nvic_ispr1 >> 21) & 1) == 0));
+
+		/* Clean up: disable */
+		*nvic_icer1 = (1u << 21);
 
 		return 0;
 	}
